@@ -5,7 +5,7 @@ export default function ThemeToggle({ className = '' }) {
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem('iert_theme');
     if (saved) return saved === 'dark';
-    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return true; // Default to dark mode for signature IERT HUB cyber theme
   });
 
   useEffect(() => {
