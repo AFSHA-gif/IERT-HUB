@@ -73,15 +73,37 @@ export async function loginAdmin(email, password) {
         return { success: false, error: 'Authentication failed. User session not created.' };
       }
 
-      // 2. Query public.user_roles for Server-Side Role Authorization
-      const { data: roleRecord, error: roleErr } = await supabase
-        .from('user_roles')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
+      // 2. Query Server-Side Role Authorization (Dual verification: RPC is_admin + user_roles table query)
+      let isAdminRole = false;
 
-      // Enforce Admin Role & Active Status
-      const isAdminRole = roleRecord?.role === 'admin' && roleRecord?.active === true;
+      // Method A: Direct RPC call to SECURITY DEFINER is_admin function
+      try {
+        const { data: rpcResult, error: rpcErr } = await supabase.rpc('is_admin', { check_user_id: user.id });
+        if (!rpcErr && rpcResult === true) {
+          isAdminRole = true;
+        }
+      } catch (e) {}
+
+      // Method B: Table query fallback with case-insensitive role verification
+      if (!isAdminRole) {
+        const { data: roleRecords, error: roleErr } = await supabase
+          .from('user_roles')
+          .select('*')
+          .eq('user_id', user.id);
+
+        if (roleErr) {
+          console.warn('user_roles query notice:', roleErr.message);
+        }
+
+        if (roleRecords && roleRecords.length > 0) {
+          const matched = roleRecords.find(r => 
+            (r.role || '').toLowerCase() === 'admin' && r.active !== false
+          );
+          if (matched) {
+            isAdminRole = true;
+          }
+        }
+      }
 
       // Allow initial bootstrap override if admin email matches configured primary admin email
       const primaryAdminEmail = import.meta.env.VITE_ADMIN_EMAIL || 'admin@iert.ac.in';
@@ -97,7 +119,7 @@ export async function loginAdmin(email, password) {
       }
 
       // Automatically register primary admin role in user_roles if bootstrapping
-      if (isPrimaryAdminBootstrap && (!roleRecord || roleRecord.role !== 'admin')) {
+      if (isPrimaryAdminBootstrap && !isAdminRole) {
         try {
           await supabase.from('user_roles').upsert([{
             user_id: user.id,
