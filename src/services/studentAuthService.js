@@ -74,6 +74,19 @@ export async function updateStudentProfile(fullName) {
 }
 
 /**
+ * Environment-aware Auth Redirect URL
+ * Production: https://iert-hub.vercel.app/student/login
+ * Local Dev: http://localhost:5173/student/login
+ */
+export function getAuthRedirectUrl() {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    const origin = window.location.origin.replace(/\/+$/, '');
+    return `${origin}/student/login`;
+  }
+  return 'https://iert-hub.vercel.app/student/login';
+}
+
+/**
  * Supabase Auth Production Registration
  * Requires valid email & password. User is registered directly in auth.users + public.students profile.
  */
@@ -91,13 +104,13 @@ export async function registerStudent(fullName, email, password) {
 
   if (isSupabaseConfigured && supabase) {
     try {
-      const siteUrl = typeof window !== 'undefined' ? window.location.origin : 'https://iert-hub.vercel.app';
+      const redirectTarget = getAuthRedirectUrl();
 
       const { data: authData, error: authErr } = await supabase.auth.signUp({
         email: cleanEmail,
         password: password,
         options: {
-          emailRedirectTo: `${siteUrl}/student/login`,
+          emailRedirectTo: redirectTarget,
           data: {
             full_name: cleanName,
             semester: 3,

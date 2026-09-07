@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { ShieldCheck, Lock, Mail, ArrowRight, Eye, EyeOff, AlertCircle, UserCheck, CheckSquare, Square } from 'lucide-react';
+import { ShieldCheck, Lock, Mail, ArrowRight, Eye, EyeOff, AlertCircle, UserCheck, CheckSquare, Square, CheckCircle } from 'lucide-react';
 import AnimatedBackground from '../components/AnimatedBackground';
 import { loginStudent, isStudentAuthenticated } from '../services/studentAuthService';
 
@@ -13,19 +13,51 @@ export default function StudentLogin() {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState('');
+  const [infoMessage, setInfoMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
   const from = location.state?.from || '/account';
 
   React.useEffect(() => {
+    // Parse Supabase Auth redirect callback parameters from URL hash or query params
+    const hash = location.hash || '';
+    const search = location.search || '';
+
+    if (hash || search) {
+      const params = new URLSearchParams(hash ? hash.replace(/^#/, '') : search);
+      const errorParam = params.get('error');
+      const errorCode = params.get('error_code');
+      const errorDesc = params.get('error_description');
+      const typeParam = params.get('type');
+      const accessToken = params.get('access_token');
+
+      if (errorParam || errorCode) {
+        if (errorCode === 'otp_expired') {
+          setError('The email verification link has expired or was already used. Please sign in or register a new account.');
+        } else if (errorDesc) {
+          setError(decodeURIComponent(errorDesc.replace(/\+/g, ' ')));
+        } else {
+          setError('Verification link is invalid or has expired.');
+        }
+      } else if (typeParam === 'signup' || accessToken) {
+        setInfoMessage('Your email address has been verified successfully! You can now log in to your account.');
+      }
+
+      // Clean sensitive tokens and error parameters from URL bar
+      if (typeof window !== 'undefined' && window.history?.replaceState) {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+    }
+
     if (isStudentAuthenticated()) {
       navigate(from, { replace: true });
     }
-  }, []);
+  }, [location, navigate, from]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setInfoMessage('');
     setLoading(true);
 
     try {
@@ -71,6 +103,14 @@ export default function StudentLogin() {
             Access your Semester 3 academic resources
           </p>
         </div>
+
+        {/* Success / Info Alert */}
+        {infoMessage && (
+          <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 text-xs flex items-center gap-2 animate-fade-in">
+            <CheckCircle className="w-4 h-4 shrink-0" />
+            <span>{infoMessage}</span>
+          </div>
+        )}
 
         {/* Error Alert */}
         {error && (
