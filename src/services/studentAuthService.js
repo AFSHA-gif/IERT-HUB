@@ -338,6 +338,7 @@ export async function fetchStudentsFromDB() {
       }
 
       if (!error && data) {
+        console.log('Fetch students DB success count:', data.length);
         const mapped = data.map(s => ({
           id: s.id,
           fullName: s.full_name,

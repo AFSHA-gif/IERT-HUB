@@ -41,6 +41,7 @@ export default function AdminStudents({ onShowToast }) {
   const loadData = async () => {
     const list = await fetchStudentsFromDB();
     const activeList = list || getAllStudents();
+    console.log('AdminStudents loadData activeList count:', activeList?.length);
     setStudents(activeList);
     setAnalytics(getStudentAnalytics(activeList));
   };
