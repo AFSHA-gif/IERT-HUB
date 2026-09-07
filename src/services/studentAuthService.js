@@ -120,6 +120,12 @@ export async function registerStudent(fullName, email, password) {
       });
 
       if (authErr) {
+        if (authErr.message.toLowerCase().includes('rate limit')) {
+          return {
+            success: false,
+            error: 'Email verification limit exceeded. Supabase default email limit reached. Please wait 10-15 minutes or configure custom SMTP in Supabase Dashboard.'
+          };
+        }
         return { success: false, error: authErr.message };
       }
 
