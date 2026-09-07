@@ -36,7 +36,6 @@ import AIStudyAssistant from './pages/AIStudyAssistant';
 import SavedMaterials from './pages/SavedMaterials';
 import StudentNotifications from './pages/StudentNotifications';
 import NotFound from './pages/NotFound';
-import Diagnostics from './pages/Diagnostics';
 
 // Admin Sidebar & Header
 import AdminSidebar from './components/admin/AdminSidebar';
@@ -190,7 +189,6 @@ export default function App() {
             <Routes>
               {/* Root Route Redirect Handler */}
               <Route path="/" element={<RootRedirect />} />
-              <Route path="/diagnostics" element={<Diagnostics />} />
               <Route path="/about" element={<About />} />
               <Route path="/student/login" element={<StudentLogin />} />
               <Route path="/login" element={<Navigate to="/student/login" replace />} />
