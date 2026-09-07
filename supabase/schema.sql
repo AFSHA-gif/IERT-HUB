@@ -24,7 +24,7 @@ AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.user_roles
     WHERE user_id = check_user_id
-      AND role = 'admin'
+      AND LOWER(role) = 'admin'
       AND active = true
   );
 $$;
