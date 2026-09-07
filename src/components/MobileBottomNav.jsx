@@ -42,7 +42,7 @@ export default function MobileBottomNav({ isPDFOpen }) {
   };
 
   return (
-    <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-xl border-t border-slate-800/80 px-2 py-1.5 pb-safe transition-all">
+    <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-950/98 border-t border-slate-800/80 px-2 py-1.5 pb-safe">
       <nav className="flex items-center justify-around">
         {navItems.map((item) => {
           const Icon = item.icon;
@@ -52,9 +52,9 @@ export default function MobileBottomNav({ isPDFOpen }) {
             <Link
               key={item.label}
               to={item.path}
-              className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl min-w-[56px] min-h-[44px] transition-all cursor-pointer ${
+              className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl min-w-[56px] min-h-[44px] transition-colors cursor-pointer ${
                 active 
-                  ? 'text-cyan-400 font-bold scale-105' 
+                  ? 'text-cyan-400 font-bold' 
                   : 'text-slate-400 hover:text-slate-200 font-medium'
               }`}
             >

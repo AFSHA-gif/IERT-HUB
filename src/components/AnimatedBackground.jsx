@@ -9,6 +9,7 @@ export default function AnimatedBackground({ variant = 'default' }) {
 
     const ctx = canvas.getContext('2d');
     let animationFrameId;
+    let isPaused = false;
 
     // Check for reduced motion preference
     const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -18,40 +19,49 @@ export default function AnimatedBackground({ variant = 'default' }) {
 
     let width = (canvas.width = window.innerWidth);
     let height = (canvas.height = window.innerHeight);
+    const isMobile = width < 768;
 
     const handleResize = () => {
       width = canvas.width = window.innerWidth;
       height = canvas.height = window.innerHeight;
     };
 
-    window.addEventListener('resize', handleResize);
+    const handleVisibilityChange = () => {
+      isPaused = document.hidden;
+      if (!isPaused) {
+        render();
+      }
+    };
 
-    // Particle nodes configuration
-    const particleCount = Math.min(Math.floor(width / 25), 45);
+    window.addEventListener('resize', handleResize);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Mobile-optimized particle count & distance
+    const particleCount = isMobile ? 12 : Math.min(Math.floor(width / 25), 45);
+    const connectionDist = isMobile ? 90 : 130;
     const particles = [];
 
     for (let i = 0; i < particleCount; i++) {
       particles.push({
         x: Math.random() * width,
         y: Math.random() * height,
-        vx: (Math.random() - 0.5) * 0.4,
-        vy: (Math.random() - 0.5) * 0.4,
-        radius: Math.random() * 2 + 1,
-        alpha: Math.random() * 0.6 + 0.2
+        vx: (Math.random() - 0.5) * (isMobile ? 0.25 : 0.4),
+        vy: (Math.random() - 0.5) * (isMobile ? 0.25 : 0.4),
+        radius: isMobile ? 1.5 : Math.random() * 2 + 1,
+        alpha: Math.random() * 0.5 + 0.2
       });
     }
 
-    let time = 0;
-
     const render = () => {
-      time += 0.01;
+      if (isPaused) return;
+
       ctx.clearRect(0, 0, width, height);
 
       // 1. Draw subtle grid
-      ctx.strokeStyle = 'rgba(6, 182, 212, 0.04)';
+      ctx.strokeStyle = 'rgba(6, 182, 212, 0.03)';
       ctx.lineWidth = 1;
 
-      const gridSize = 40;
+      const gridSize = isMobile ? 50 : 40;
       for (let x = 0; x < width; x += gridSize) {
         ctx.beginPath();
         ctx.moveTo(x, 0);
@@ -79,10 +89,18 @@ export default function AnimatedBackground({ variant = 'default' }) {
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
         ctx.fillStyle = `rgba(34, 211, 238, ${p.alpha})`;
-        ctx.shadowColor = '#06b6d4';
-        ctx.shadowBlur = 8;
+
+        // Skip shadowBlur on mobile for GPU smoothness
+        if (!isMobile) {
+          ctx.shadowColor = '#06b6d4';
+          ctx.shadowBlur = 8;
+        }
+
         ctx.fill();
-        ctx.shadowBlur = 0;
+
+        if (!isMobile) {
+          ctx.shadowBlur = 0;
+        }
 
         // Draw connections to nearby particles
         for (let j = i + 1; j < particles.length; j++) {
@@ -91,11 +109,11 @@ export default function AnimatedBackground({ variant = 'default' }) {
           const dy = p.y - p2.y;
           const dist = Math.sqrt(dx * dx + dy * dy);
 
-          if (dist < 130) {
+          if (dist < connectionDist) {
             ctx.beginPath();
             ctx.moveTo(p.x, p.y);
             ctx.lineTo(p2.x, p2.y);
-            const lineAlpha = (1 - dist / 130) * 0.15;
+            const lineAlpha = (1 - dist / connectionDist) * 0.12;
             ctx.strokeStyle = `rgba(59, 130, 246, ${lineAlpha})`;
             ctx.lineWidth = 1;
             ctx.stroke();
@@ -110,24 +128,25 @@ export default function AnimatedBackground({ variant = 'default' }) {
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       cancelAnimationFrame(animationFrameId);
     };
   }, []);
 
   return (
     <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
-      {/* Soft gradient background radial glow */}
+      {/* Optimized responsive gradient radial background glows */}
       <div 
-        className="absolute -top-[20%] -left-[10%] w-[600px] h-[600px] rounded-full blur-[140px] opacity-25 dark:opacity-20 pointer-events-none"
+        className="absolute -top-[15%] -left-[10%] w-[300px] h-[300px] md:w-[600px] md:h-[600px] rounded-full blur-[60px] md:blur-[140px] opacity-25 dark:opacity-20 pointer-events-none"
         style={{ background: 'radial-gradient(circle, #06b6d4 0%, transparent 70%)' }}
       />
       <div 
-        className="absolute -bottom-[20%] -right-[10%] w-[700px] h-[700px] rounded-full blur-[160px] opacity-20 dark:opacity-15 pointer-events-none"
+        className="absolute -bottom-[15%] -right-[10%] w-[320px] h-[320px] md:w-[700px] md:h-[700px] rounded-full blur-[70px] md:blur-[160px] opacity-20 dark:opacity-15 pointer-events-none"
         style={{ background: 'radial-gradient(circle, #7c3aed 0%, transparent 70%)' }}
       />
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 w-full h-full opacity-75 dark:opacity-90"
+        className="absolute inset-0 w-full h-full opacity-60 md:opacity-85"
       />
     </div>
   );

@@ -54,7 +54,7 @@ export default function StudentRegister() {
     <div className="relative min-h-[85vh] flex items-center justify-center p-4">
       <AnimatedBackground variant="student" />
 
-      <div className="relative z-10 w-full max-w-md glass-card rounded-3xl p-8 border border-slate-200 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-2xl shadow-2xl space-y-6">
+      <div className="relative z-10 w-full max-w-md glass-card rounded-3xl p-8 border border-slate-200 dark:border-slate-800/80 bg-white/95 dark:bg-slate-900/95 backdrop-blur-none md:backdrop-blur-xl shadow-2xl space-y-6">
         
         <div className="text-center space-y-2">
           <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-cyan-500 via-blue-600 to-indigo-600 flex items-center justify-center text-white mx-auto shadow-xl shadow-cyan-500/20">
