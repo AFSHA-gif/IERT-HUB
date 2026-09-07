@@ -40,8 +40,9 @@ export default function AdminStudents({ onShowToast }) {
 
   const loadData = async () => {
     const list = await fetchStudentsFromDB();
-    setStudents(list || getAllStudents());
-    setAnalytics(getStudentAnalytics());
+    const activeList = list || getAllStudents();
+    setStudents(activeList);
+    setAnalytics(getStudentAnalytics(activeList));
   };
 
   useEffect(() => {

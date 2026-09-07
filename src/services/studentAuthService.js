@@ -253,8 +253,24 @@ export async function loginStudent(email, password, rememberMe = true) {
         lastLogin: nowIso
       };
 
-      // Update last_login timestamp in public.students
-      await supabase.from('students').update({ last_login: nowIso }).eq('id', user.id);
+      // Ensure Student Profile exists in public.students (Self-healing on login if registered before trigger)
+      if (!profile) {
+        try {
+          await supabase.from('students').upsert([{
+            id: user.id,
+            full_name: user.user_metadata?.full_name || cleanEmail.split('@')[0],
+            email: cleanEmail,
+            semester: 3,
+            branch: 'B.Tech Cyber Security',
+            status: 'Active',
+            registration_date: user.created_at || nowIso,
+            last_login: nowIso
+          }], { onConflict: 'id' });
+        } catch (pe) {}
+      } else {
+        // Update last_login timestamp in public.students
+        await supabase.from('students').update({ last_login: nowIso }).eq('id', user.id);
+      }
 
       setStudentSession({
         token: authData.session?.access_token || `token_${Date.now()}`,
@@ -317,6 +333,10 @@ export async function fetchStudentsFromDB() {
         .select('*')
         .order('registration_date', { ascending: false });
 
+      if (error) {
+        console.warn('Fetch students DB error:', error.message);
+      }
+
       if (!error && data) {
         const mapped = data.map(s => ({
           id: s.id,
@@ -355,8 +375,8 @@ export function getAllStudents() {
   }
 }
 
-export function getStudentAnalytics() {
-  const list = getAllStudents();
+export function getStudentAnalytics(providedList) {
+  const list = providedList || getAllStudents();
   const totalStudents = list.length;
   const activeStudents = list.filter(s => s.status === 'Active' || !s.status).length;
   const inactiveStudents = list.filter(s => s.status === 'Inactive' || s.status === 'deactivated').length;
