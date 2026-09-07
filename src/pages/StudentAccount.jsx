@@ -20,7 +20,7 @@ import {
   X,
   Check
 } from 'lucide-react';
-import { getCurrentStudent, logoutStudent, saveUsers, getStoredUsers } from '../services/studentAuthService';
+import { getCurrentStudent, logoutStudent, updateStudentProfile } from '../services/studentAuthService';
 import { getSavedResourceIds, getRecentlyViewedIds, getStudyStreak } from '../services/studentPreferencesService';
 
 export default function StudentAccount() {
@@ -59,35 +59,17 @@ export default function StudentAccount() {
     navigate('/login');
   };
 
-  const handleSaveProfile = (e) => {
+  const handleSaveProfile = async (e) => {
     e.preventDefault();
     if (!editFullName.trim() || !student) return;
 
-    const users = getStoredUsers();
-    const index = users.findIndex(u => u.id === student.id || u.email === student.email);
-
-    if (index !== -1) {
-      users[index].fullName = editFullName.trim();
-      saveUsers(users);
+    const res = await updateStudentProfile(editFullName);
+    if (res.success) {
+      setEditSuccessMsg('Profile updated successfully!');
+      setTimeout(() => setEditSuccessMsg(''), 3000);
+      setShowEditModal(false);
+      loadData();
     }
-
-    // Update active student session
-    const sessionData = localStorage.getItem('iert_student_session_v2');
-    if (sessionData) {
-      try {
-        const parsed = JSON.parse(sessionData);
-        parsed.student.fullName = editFullName.trim();
-        localStorage.setItem('iert_student_session_v2', JSON.stringify(parsed));
-        window.dispatchEvent(new Event('iert_student_auth_changed'));
-      } catch (err) {
-        console.error('Session update error:', err);
-      }
-    }
-
-    setShowEditModal(false);
-    setEditSuccessMsg('Profile updated successfully.');
-    setTimeout(() => setEditSuccessMsg(''), 3000);
-    loadData();
   };
 
   if (!student) return null;

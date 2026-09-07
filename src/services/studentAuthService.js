@@ -1,129 +1,94 @@
 import { supabase, isSupabaseConfigured } from './supabaseClient';
 import { logAdminAction } from './adminLogService';
 
-const USERS_KEY = 'iert_student_users_v2';
-const SESSION_KEY = 'iert_student_session_v2';
+const SESSION_KEY = 'iert_student_session_v4';
+const PROFILES_CACHE_KEY = 'iert_student_registry_v4';
 
-// Default pre-populated demo student registry for B.Tech Cyber Security Sem 3
-const DEFAULT_STUDENTS = [
-  {
-    id: 'stud-001',
-    fullName: 'Abhishek Kumar',
-    email: 'student@iert.ac.in',
-    passwordHash: 'c3R1ZGVudDEyMw==', // student123
-    semester: 3,
-    branch: 'B.Tech Cyber Security',
-    status: 'Active',
-    registrationDate: '2026-08-10T09:00:00.000Z',
-    lastLogin: new Date().toISOString()
-  },
-  {
-    id: 'stud-002',
-    fullName: 'Priya Sharma',
-    email: 'priya.sharma@iert.ac.in',
-    passwordHash: 'c3R1ZGVudDEyMw==',
-    semester: 3,
-    branch: 'B.Tech Cyber Security',
-    status: 'Active',
-    registrationDate: '2026-08-14T11:20:00.000Z',
-    lastLogin: '2026-09-04T14:15:00.000Z'
-  },
-  {
-    id: 'stud-003',
-    fullName: 'Rohan Verma',
-    email: 'rohan.v@iert.ac.in',
-    passwordHash: 'c3R1ZGVudDEyMw==',
-    semester: 3,
-    branch: 'B.Tech Cyber Security',
-    status: 'Active',
-    registrationDate: '2026-08-20T16:45:00.000Z',
-    lastLogin: '2026-09-02T10:00:00.000Z'
+let activeStudentSession = null;
+
+/**
+ * Synchronize and cache student session in memory and storage
+ */
+export function setStudentSession(sessionData) {
+  activeStudentSession = sessionData;
+  if (sessionData) {
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify(sessionData));
+    } catch (e) {}
+  } else {
+    try {
+      localStorage.removeItem(SESSION_KEY);
+    } catch (e) {}
   }
-];
-
-export function getStoredUsers() {
-  try {
-    const data = localStorage.getItem(USERS_KEY);
-    if (!data) {
-      try {
-        localStorage.setItem(USERS_KEY, JSON.stringify(DEFAULT_STUDENTS));
-      } catch (e) {}
-      return DEFAULT_STUDENTS;
-    }
-    const parsed = JSON.parse(data);
-    return Array.isArray(parsed) ? parsed : DEFAULT_STUDENTS;
-  } catch (err) {
-    return DEFAULT_STUDENTS;
-  }
-}
-
-export function saveUsers(users) {
-  try {
-    localStorage.setItem(USERS_KEY, JSON.stringify(users));
-    window.dispatchEvent(new Event('iert_student_registry_updated'));
-  } catch (e) {}
-}
-
-export function isStudentAuthenticated() {
-  try {
-    const data = localStorage.getItem(SESSION_KEY);
-    if (!data) return false;
-    const session = JSON.parse(data);
-    if (!session || !session.token || !session.student) return false;
-
-    // Verify account status has not been set to Inactive
-    const users = getStoredUsers();
-    const current = users.find(u => 
-      (session.student.id && u.id === session.student.id) || 
-      (session.student.email && u.email === session.student.email)
-    );
-    if (current && current.status === 'Inactive') {
-      logoutStudent();
-      return false;
-    }
-
-    return true;
-  } catch (err) {
-    return false;
-  }
+  window.dispatchEvent(new Event('iert_student_auth_changed'));
 }
 
 export function getCurrentStudent() {
+  if (activeStudentSession?.student) {
+    return activeStudentSession.student;
+  }
   try {
-    const data = localStorage.getItem(SESSION_KEY);
-    if (!data) return null;
-    const session = JSON.parse(data);
-    return session.student || null;
-  } catch (err) {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.student || null;
+  } catch (e) {
     return null;
   }
 }
 
+export function isStudentAuthenticated() {
+  const student = getCurrentStudent();
+  if (!student || !student.id) return false;
+  if (student.status === 'Inactive' || student.status === 'deactivated') {
+    logoutStudent();
+    return false;
+  }
+  return true;
+}
+
+export async function updateStudentProfile(fullName) {
+  const current = getCurrentStudent();
+  if (!current || !current.id) return { success: false, error: 'User is not logged in.' };
+
+  const cleanName = (fullName || '').trim();
+  if (!cleanName) return { success: false, error: 'Full name is required.' };
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      await supabase.from('students').update({ full_name: cleanName }).eq('id', current.id);
+      await supabase.auth.updateUser({ data: { full_name: cleanName } });
+    } catch (err) {
+      console.warn('Update profile DB error:', err);
+    }
+  }
+
+  const updatedStudent = { ...current, fullName: cleanName };
+  setStudentSession({
+    token: activeStudentSession?.token || `token_${Date.now()}`,
+    student: updatedStudent,
+    loginTime: new Date().toISOString()
+  });
+
+  return { success: true, student: updatedStudent };
+}
+
+/**
+ * Supabase Auth Production Registration
+ * Requires valid email & password. User is registered directly in auth.users + public.students profile.
+ */
 export async function registerStudent(fullName, email, password) {
   const cleanEmail = (email || '').trim().toLowerCase();
+  const cleanName = (fullName || '').trim();
 
-  if (!fullName || !email || !password) {
-    return { success: false, error: 'All registration fields are required.' };
+  if (!cleanName || !cleanEmail || !password) {
+    return { success: false, error: 'Full name, email address, and password are required.' };
   }
 
   if (password.length < 6) {
     return { success: false, error: 'Password must be at least 6 characters long.' };
   }
 
-  const nowIso = new Date().toISOString();
-  const newStudent = {
-    id: `stud-${Date.now()}`,
-    fullName: fullName.trim(),
-    email: cleanEmail,
-    passwordHash: btoa(password),
-    semester: 3,
-    branch: 'B.Tech Cyber Security',
-    status: 'Active',
-    registrationDate: nowIso,
-    lastLogin: nowIso
-  };
-
-  // SUPABASE CLOUD AUTH + DB INSERT
   if (isSupabaseConfigured && supabase) {
     try {
       const { data: authData, error: authErr } = await supabase.auth.signUp({
@@ -131,172 +96,206 @@ export async function registerStudent(fullName, email, password) {
         password: password,
         options: {
           data: {
-            full_name: fullName,
+            full_name: cleanName,
             semester: 3,
             branch: 'B.Tech Cyber Security'
           }
         }
       });
 
-      if (authErr) console.warn('Supabase auth notice:', authErr.message);
-
-      if (authData?.user) {
-        newStudent.id = authData.user.id;
+      if (authErr) {
+        return { success: false, error: authErr.message };
       }
 
-      await supabase.from('students').insert([{
-        id: newStudent.id,
-        full_name: newStudent.fullName,
+      if (!authData?.user) {
+        return { success: false, error: 'Registration failed. Unable to create authentication account.' };
+      }
+
+      const userId = authData.user.id;
+      const nowIso = new Date().toISOString();
+
+      // Insert Student Profile Record into public.students
+      const { error: profileErr } = await supabase.from('students').upsert([{
+        id: userId,
+        full_name: cleanName,
         email: cleanEmail,
         semester: 3,
         branch: 'B.Tech Cyber Security',
         status: 'Active',
         registration_date: nowIso,
         last_login: nowIso
-      }]);
+      }], { onConflict: 'email' });
+
+      if (profileErr) {
+        console.warn('Student profile upsert notice:', profileErr.message);
+      }
+
+      // Assign student role in public.user_roles
+      try {
+        await supabase.from('user_roles').upsert([{
+          user_id: userId,
+          role: 'student',
+          active: true
+        }], { onConflict: 'user_id' });
+      } catch (e) {}
+
+      // Handle Email Verification requirement if enabled on Supabase
+      if (authData.session === null && authData.user?.identities?.length > 0) {
+        return {
+          success: true,
+          requiresVerification: true,
+          message: 'Registration successful! A verification link has been sent to your email address. Please confirm your email before logging in.'
+        };
+      }
+
+      const studentObj = {
+        id: userId,
+        fullName: cleanName,
+        email: cleanEmail,
+        semester: 3,
+        branch: 'B.Tech Cyber Security',
+        status: 'Active',
+        registrationDate: nowIso,
+        lastLogin: nowIso
+      };
+
+      setStudentSession({
+        token: authData.session?.access_token || `token_${Date.now()}`,
+        student: studentObj,
+        loginTime: nowIso
+      });
+
+      return { success: true, student: studentObj };
     } catch (err) {
-      console.warn('Supabase DB Student Sync notice:', err);
+      console.error('Registration exception:', err);
+      return { success: false, error: err.message || 'Registration failed due to a network error.' };
     }
   }
 
-  // LOCAL PERSISTENT REGISTRY
-  const users = getStoredUsers();
-  const existing = users.find(u => u.email.toLowerCase() === cleanEmail);
-  
-  if (existing) {
-    return { success: false, error: 'An account with this email address already exists. Please login.' };
-  }
-
-  users.unshift(newStudent);
-  saveUsers(users);
-
-  saveStudentSession(newStudent, `local_session_${Date.now()}`);
-  return { success: true, student: newStudent };
+  // Development Fallback Only (Disabled in production when Supabase is configured)
+  return { success: false, error: 'Backend authentication server unavailable. Please configure Supabase Auth.' };
 }
 
+/**
+ * Supabase Auth Production Login
+ * Verifies email + password against Supabase Auth.
+ */
 export async function loginStudent(email, password, rememberMe = true) {
   const cleanEmail = (email || '').trim().toLowerCase();
 
-  if (!email || !password) {
-    return { success: false, error: 'Email and password are required.' };
+  if (!cleanEmail || !password) {
+    return { success: false, error: 'Email address and password are required.' };
   }
 
-  const users = getStoredUsers();
-  let user = users.find(u => u.email.toLowerCase() === cleanEmail);
-
-  // Check if student account is deactivated by Administrator
-  if (user && user.status === 'Inactive') {
-    return { success: false, error: 'Your student account has been deactivated by the Administrator. Access denied.' };
-  }
-
-  const nowIso = new Date().toISOString();
-
-  // SUPABASE CLOUD AUTH
   if (isSupabaseConfigured && supabase) {
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
         password: password
       });
 
-      if (error) throw error;
-
-      // Check DB status
-      const { data: dbUser } = await supabase.from('students').select('*').eq('email', cleanEmail).single();
-      if (dbUser && dbUser.status === 'Inactive') {
-        supabase.auth.signOut();
-        return { success: false, error: 'Your student account has been deactivated by the Administrator. Access denied.' };
+      if (authErr) {
+        if (authErr.message.includes('Email not confirmed')) {
+          return { success: false, error: 'Please verify your email address before logging in.' };
+        }
+        return { success: false, error: 'Invalid email address or password. Access denied.' };
       }
 
-      const studentUser = {
-        id: data.user.id,
-        fullName: data.user.user_metadata?.full_name || cleanEmail.split('@')[0],
+      const user = authData?.user;
+      if (!user) {
+        return { success: false, error: 'Authentication failed. User session not found.' };
+      }
+
+      // Check Student Profile Status in public.students
+      const { data: profile } = await supabase
+        .from('students')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+
+      if (profile && (profile.status === 'Inactive' || profile.status === 'deactivated')) {
+        await supabase.auth.signOut();
+        setStudentSession(null);
+        return { success: false, error: 'Your student account has been deactivated by an administrator. Access denied.' };
+      }
+
+      const nowIso = new Date().toISOString();
+      const studentObj = {
+        id: user.id,
+        fullName: profile?.full_name || user.user_metadata?.full_name || cleanEmail.split('@')[0],
         email: cleanEmail,
-        semester: 3,
-        branch: 'B.Tech Cyber Security',
-        status: dbUser?.status || 'Active',
-        registrationDate: data.user.created_at || nowIso,
+        semester: profile?.semester || 3,
+        branch: profile?.branch || 'B.Tech Cyber Security',
+        status: profile?.status || 'Active',
+        registrationDate: profile?.registration_date || user.created_at || nowIso,
         lastLogin: nowIso
       };
 
-      await supabase.from('students').update({ last_login: nowIso }).eq('email', cleanEmail);
-      saveStudentSession(studentUser, data.session?.access_token || `token_${Date.now()}`);
-      return { success: true, student: studentUser };
+      // Update last_login timestamp in public.students
+      await supabase.from('students').update({ last_login: nowIso }).eq('id', user.id);
+
+      setStudentSession({
+        token: authData.session?.access_token || `token_${Date.now()}`,
+        student: studentObj,
+        loginTime: nowIso
+      });
+
+      return { success: true, student: studentObj };
     } catch (err) {
-      console.warn('Supabase Auth notice, fallback to local login:', err);
+      console.error('Login error:', err);
+      return { success: false, error: err.message || 'Login failed. Please check your credentials.' };
     }
   }
 
-  // LOCAL AUTH FALLBACK
-  if (user) {
-    const isMatch = user.passwordHash === btoa(password) || password === 'student123' || password === 'admin123';
-    if (isMatch) {
-      user.lastLogin = nowIso;
-      saveUsers(users);
-      saveStudentSession(user, `local_session_${Date.now()}`);
-      return { success: true, student: user };
-    }
-  }
-
-  // Auto register demo student if logging in for first time in demo mode
-  const demoStudent = {
-    id: `stud-${Date.now()}`,
-    fullName: cleanEmail.split('@')[0].replace(/[._]/g, ' '),
-    email: cleanEmail,
-    semester: 3,
-    branch: 'B.Tech Cyber Security',
-    status: 'Active',
-    registrationDate: nowIso,
-    lastLogin: nowIso
-  };
-
-  users.unshift(demoStudent);
-  saveUsers(users);
-  saveStudentSession(demoStudent, `demo_session_${Date.now()}`);
-  return { success: true, student: demoStudent };
+  return { success: false, error: 'Backend authentication server unavailable. Please configure Supabase Auth.' };
 }
 
-function saveStudentSession(student, token) {
-  const session = {
-    token,
-    student: {
-      id: student.id,
-      fullName: student.fullName,
-      email: student.email,
-      semester: student.semester || 3,
-      branch: student.branch || 'B.Tech Cyber Security',
-      status: student.status || 'Active',
-      registrationDate: student.registrationDate || new Date().toISOString(),
-      lastLogin: student.lastLogin || new Date().toISOString()
-    },
-    loginTime: new Date().toISOString()
-  };
-
-  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-  window.dispatchEvent(new Event('iert_student_auth_changed'));
-}
-
-export function logoutStudent() {
-  localStorage.removeItem(SESSION_KEY);
+/**
+ * Logout Student Session
+ */
+export async function logoutStudent() {
+  setStudentSession(null);
   if (isSupabaseConfigured && supabase) {
-    supabase.auth.signOut().catch(() => {});
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {}
   }
-  window.dispatchEvent(new Event('iert_student_auth_changed'));
+}
+
+/**
+ * Send Password Reset Email via Supabase Auth
+ */
+export async function resetStudentPassword(email) {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail) return { success: false, error: 'Email address is required.' };
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+        redirectTo: `${window.location.origin}/student/login`
+      });
+      if (error) return { success: false, error: error.message };
+      return { success: true, message: 'Password reset link has been sent to your email address.' };
+    } catch (err) {
+      return { success: false, error: err.message || 'Password reset request failed.' };
+    }
+  }
+  return { success: false, error: 'Supabase Auth is not configured.' };
 }
 
 /* ========================================================
    ADMIN STUDENT MANAGEMENT SERVICE FUNCTIONS
    ======================================================== */
 
-export function getAllStudents() {
-  return getStoredUsers();
-}
-
 export async function fetchStudentsFromDB() {
   if (isSupabaseConfigured && supabase) {
     try {
-      const { data, error } = await supabase.from('students').select('*').order('registration_date', { ascending: false });
-      if (!error && data && data.length > 0) {
+      const { data, error } = await supabase
+        .from('students')
+        .select('*')
+        .order('registration_date', { ascending: false });
+
+      if (!error && data) {
         const mapped = data.map(s => ({
           id: s.id,
           fullName: s.full_name,
@@ -307,21 +306,38 @@ export async function fetchStudentsFromDB() {
           registrationDate: s.registration_date,
           lastLogin: s.last_login
         }));
-        saveUsers(mapped);
+        try {
+          localStorage.setItem(PROFILES_CACHE_KEY, JSON.stringify(mapped));
+        } catch (e) {}
         return mapped;
       }
     } catch (err) {
-      console.warn('Supabase DB fetch students error:', err);
+      console.warn('Fetch students error:', err);
     }
   }
-  return getStoredUsers();
+
+  try {
+    const raw = localStorage.getItem(PROFILES_CACHE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+export function getAllStudents() {
+  try {
+    const raw = localStorage.getItem(PROFILES_CACHE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
 }
 
 export function getStudentAnalytics() {
-  const list = getStoredUsers();
+  const list = getAllStudents();
   const totalStudents = list.length;
   const activeStudents = list.filter(s => s.status === 'Active' || !s.status).length;
-  const inactiveStudents = list.filter(s => s.status === 'Inactive').length;
+  const inactiveStudents = list.filter(s => s.status === 'Inactive' || s.status === 'deactivated').length;
 
   const todayStr = new Date().toISOString().split('T')[0];
   const newToday = list.filter(s => s.registrationDate && s.registrationDate.startsWith(todayStr)).length;
@@ -335,55 +351,68 @@ export function getStudentAnalytics() {
 }
 
 export async function toggleStudentStatus(studentId) {
-  const users = getStoredUsers();
-  const index = users.findIndex(u => u.id === studentId);
-  if (index === -1) return null;
+  if (!studentId) return null;
 
-  const newStatus = users[index].status === 'Inactive' ? 'Active' : 'Inactive';
-  users[index].status = newStatus;
-  saveUsers(users);
+  let newStatus = 'Inactive';
+  const list = getAllStudents();
+  const found = list.find(s => s.id === studentId);
+  if (found) {
+    newStatus = found.status === 'Inactive' || found.status === 'deactivated' ? 'Active' : 'Inactive';
+  }
 
   if (isSupabaseConfigured && supabase) {
     try {
       await supabase.from('students').update({ status: newStatus }).eq('id', studentId);
     } catch (err) {
-      console.error('Supabase status toggle error:', err);
+      console.error('Toggle status DB error:', err);
     }
   }
 
-  // If currently logged in user is deactivated, force logout
-  const currentSession = getCurrentStudent();
-  if (currentSession && currentSession.id === studentId && newStatus === 'Inactive') {
+  // Update local cache
+  const updatedList = list.map(s => s.id === studentId ? { ...s, status: newStatus } : s);
+  try {
+    localStorage.setItem(PROFILES_CACHE_KEY, JSON.stringify(updatedList));
+  } catch (e) {}
+
+  // If active logged in student was deactivated, revoke session
+  const current = getCurrentStudent();
+  if (current && current.id === studentId && newStatus === 'Inactive') {
     logoutStudent();
   }
 
-  logAdminAction(
-    newStatus === 'Inactive' ? 'Student Account Deactivated' : 'Student Account Activated',
-    `${users[index].fullName} (${users[index].email})`,
-    'Student'
-  );
+  if (found) {
+    logAdminAction(
+      newStatus === 'Inactive' ? 'Student Account Deactivated' : 'Student Account Activated',
+      `${found.fullName} (${found.email})`,
+      'Student'
+    );
+  }
 
-  return users[index];
+  return { ...found, status: newStatus };
 }
 
 export async function deleteStudentAccount(studentId) {
-  const users = getStoredUsers();
-  const target = users.find(u => u.id === studentId);
+  if (!studentId) return false;
 
-  const filtered = users.filter(u => u.id !== studentId);
-  saveUsers(filtered);
+  const list = getAllStudents();
+  const target = list.find(s => s.id === studentId);
 
   if (isSupabaseConfigured && supabase) {
     try {
       await supabase.from('students').delete().eq('id', studentId);
+      await supabase.from('user_roles').delete().eq('user_id', studentId);
     } catch (err) {
-      console.error('Supabase delete student error:', err);
+      console.error('Delete student DB error:', err);
     }
   }
 
-  // If currently logged in user is deleted, force logout
-  const currentSession = getCurrentStudent();
-  if (currentSession && currentSession.id === studentId) {
+  const filtered = list.filter(s => s.id !== studentId);
+  try {
+    localStorage.setItem(PROFILES_CACHE_KEY, JSON.stringify(filtered));
+  } catch (e) {}
+
+  const current = getCurrentStudent();
+  if (current && current.id === studentId) {
     logoutStudent();
   }
 

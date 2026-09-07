@@ -1,9 +1,48 @@
 -- ========================================================
--- IERT HUB - Supabase Database & Private Storage Setup
+-- IERT HUB - Production Supabase Database & Security Schema
 -- B.Tech Cyber Security Semester 3 Resource Platform
 -- ========================================================
 
--- 1. Create Resources Metadata Table
+-- 1. Create User Roles Table (Server-Side Role Authorization)
+CREATE TABLE IF NOT EXISTS public.user_roles (
+  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('student', 'admin')),
+  active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_roles_user_id ON public.user_roles(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_roles_role ON public.user_roles(role);
+
+-- 2. Create Security Definer Helper Functions for RLS
+CREATE OR REPLACE FUNCTION public.is_admin(check_user_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.user_roles
+    WHERE user_id = check_user_id
+      AND role = 'admin'
+      AND active = true
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_active_student(check_user_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.students
+    WHERE id = check_user_id
+      AND status = 'Active'
+  );
+$$;
+
+-- 3. Create Resources Metadata Table
 CREATE TABLE IF NOT EXISTS public.resources (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title TEXT NOT NULL,
@@ -12,9 +51,9 @@ CREATE TABLE IF NOT EXISTS public.resources (
   subject_code TEXT NOT NULL, -- e.g. CS301, CY301
   subject_name TEXT NOT NULL,
   semester INT NOT NULL DEFAULT 3,
-  unit INT, -- For Notes, Assignments, Important Questions
-  year TEXT, -- For Previous Year Papers
-  experiment_number TEXT, -- For Practicals
+  unit INT,
+  year TEXT,
+  experiment_number TEXT,
   tags TEXT[] DEFAULT '{}',
   file_name TEXT NOT NULL,
   file_url TEXT NOT NULL,
@@ -28,17 +67,15 @@ CREATE TABLE IF NOT EXISTS public.resources (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2. Create Indexes for High-Performance Search & Filtering
 CREATE INDEX IF NOT EXISTS idx_resources_category ON public.resources(category);
 CREATE INDEX IF NOT EXISTS idx_resources_subject_code ON public.resources(subject_code);
 CREATE INDEX IF NOT EXISTS idx_resources_unit ON public.resources(unit);
-CREATE INDEX IF NOT EXISTS idx_resources_year ON public.resources(year);
 CREATE INDEX IF NOT EXISTS idx_resources_status ON public.resources(status);
 CREATE INDEX IF NOT EXISTS idx_resources_uploaded_at ON public.resources(uploaded_at DESC);
 
--- 3. Create Students Registry Table
+-- 4. Create Students Registry Table (Linked to auth.users)
 CREATE TABLE IF NOT EXISTS public.students (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   full_name TEXT NOT NULL,
   email TEXT UNIQUE NOT NULL,
   semester INT DEFAULT 3,
@@ -53,7 +90,7 @@ CREATE TABLE IF NOT EXISTS public.students (
 CREATE INDEX IF NOT EXISTS idx_students_status ON public.students(status);
 CREATE INDEX IF NOT EXISTS idx_students_email ON public.students(email);
 
--- 4. Create Resource Activity Log Table (View / Download / Bookmark tracking)
+-- 5. Create Resource Activity Log Table
 CREATE TABLE IF NOT EXISTS public.resource_activity (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   student_id TEXT NOT NULL,
@@ -63,10 +100,9 @@ CREATE TABLE IF NOT EXISTS public.resource_activity (
 );
 
 CREATE INDEX IF NOT EXISTS idx_activity_student_id ON public.resource_activity(student_id);
-CREATE INDEX IF NOT EXISTS idx_activity_resource_id ON public.resource_activity(resource_id);
 CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON public.resource_activity(timestamp DESC);
 
--- 5. Create Admin Audit Logs Table
+-- 6. Create Admin Audit Logs Table
 CREATE TABLE IF NOT EXISTS public.admin_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   admin_email TEXT NOT NULL DEFAULT 'admin@iert.ac.in',
@@ -78,94 +114,103 @@ CREATE TABLE IF NOT EXISTS public.admin_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_admin_logs_timestamp ON public.admin_logs(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_admin_logs_action ON public.admin_logs(action);
 
--- 6. Enable Row Level Security (RLS)
+-- 7. Enable Row Level Security (RLS)
+ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.resources ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.students ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.resource_activity ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.admin_logs ENABLE ROW LEVEL SECURITY;
 
 -- --------------------------------------------------------
+-- USER ROLES RLS POLICIES
+-- --------------------------------------------------------
+
+CREATE POLICY "Users read own role / Admins read all" ON public.user_roles
+  FOR SELECT
+  USING (auth.uid() = user_id OR public.is_admin(auth.uid()));
+
+CREATE POLICY "Admins manage roles" ON public.user_roles
+  FOR ALL
+  USING (public.is_admin(auth.uid()));
+
+-- --------------------------------------------------------
 -- RESOURCES RLS POLICIES
 -- --------------------------------------------------------
 
-CREATE POLICY "Authenticated users can read resources" ON public.resources
+CREATE POLICY "Active students & Admins read resources" ON public.resources
   FOR SELECT
-  USING (auth.role() = 'authenticated' AND status = 'Active');
+  USING (
+    status = 'Active' AND (
+      public.is_admin(auth.uid()) OR public.is_active_student(auth.uid())
+    )
+  );
 
-CREATE POLICY "Admins can insert resources" ON public.resources
-  FOR INSERT
-  WITH CHECK (auth.role() = 'authenticated');
-
-CREATE POLICY "Admins can update resources" ON public.resources
-  FOR UPDATE
-  USING (auth.role() = 'authenticated');
-
-CREATE POLICY "Admins can delete resources" ON public.resources
-  FOR DELETE
-  USING (auth.role() = 'authenticated');
+CREATE POLICY "Admins manage resources" ON public.resources
+  FOR ALL
+  USING (public.is_admin(auth.uid()));
 
 -- --------------------------------------------------------
 -- STUDENTS RLS POLICIES
 -- --------------------------------------------------------
 
-CREATE POLICY "Users can read student profiles" ON public.students
+CREATE POLICY "Students read own profile / Admins read all" ON public.students
   FOR SELECT
-  USING (auth.role() = 'authenticated');
+  USING (auth.uid() = id OR public.is_admin(auth.uid()));
 
-CREATE POLICY "Allow student registration" ON public.students
+CREATE POLICY "Allow student registration profile creation" ON public.students
   FOR INSERT
-  WITH CHECK (true);
+  WITH CHECK (auth.uid() = id OR public.is_admin(auth.uid()));
 
-CREATE POLICY "Allow student profile update" ON public.students
+CREATE POLICY "Students update own profile / Admins update all" ON public.students
   FOR UPDATE
-  USING (auth.role() = 'authenticated');
+  USING (
+    public.is_admin(auth.uid()) OR 
+    (auth.uid() = id AND public.is_active_student(auth.uid()))
+  );
 
-CREATE POLICY "Allow student account deletion" ON public.students
+CREATE POLICY "Admins delete students" ON public.students
   FOR DELETE
-  USING (auth.role() = 'authenticated');
+  USING (public.is_admin(auth.uid()));
 
 -- --------------------------------------------------------
 -- RESOURCE ACTIVITY RLS POLICIES
 -- --------------------------------------------------------
 
-CREATE POLICY "Students insert own activity" ON public.resource_activity
-  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Active students record activity" ON public.resource_activity
+  FOR INSERT
+  WITH CHECK (public.is_active_student(auth.uid()));
 
-CREATE POLICY "Users read own activity / Admins read all" ON public.resource_activity
-  FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "Students read own activity / Admins read all" ON public.resource_activity
+  FOR SELECT
+  USING (student_id = auth.uid()::text OR public.is_admin(auth.uid()));
 
 -- --------------------------------------------------------
 -- ADMIN LOGS RLS POLICIES
 -- --------------------------------------------------------
 
-CREATE POLICY "Admins read audit logs" ON public.admin_logs
-  FOR SELECT USING (auth.role() = 'authenticated');
-
-CREATE POLICY "Admins insert audit logs" ON public.admin_logs
-  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Admins read and create audit logs" ON public.admin_logs
+  FOR ALL
+  USING (public.is_admin(auth.uid()));
 
 -- ========================================================
--- 7. PRIVATE STORAGE BUCKET SETUP: "academic-materials"
+-- 8. PRIVATE STORAGE BUCKET SETUP: "academic-materials"
 -- ========================================================
 
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('academic-materials', 'academic-materials', false)
 ON CONFLICT (id) DO UPDATE SET public = false;
 
-CREATE POLICY "Authenticated users read private storage" ON storage.objects
+CREATE POLICY "Active students & Admins read private storage" ON storage.objects
   FOR SELECT
-  USING (bucket_id = 'academic-materials' AND auth.role() = 'authenticated');
+  USING (
+    bucket_id = 'academic-materials' AND (
+      public.is_admin(auth.uid()) OR public.is_active_student(auth.uid())
+    )
+  );
 
-CREATE POLICY "Admins upload private storage" ON storage.objects
-  FOR INSERT
-  WITH CHECK (bucket_id = 'academic-materials' AND auth.role() = 'authenticated');
-
-CREATE POLICY "Admins update private storage" ON storage.objects
-  FOR UPDATE
-  USING (bucket_id = 'academic-materials' AND auth.role() = 'authenticated');
-
-CREATE POLICY "Admins delete private storage" ON storage.objects
-  FOR DELETE
-  USING (bucket_id = 'academic-materials' AND auth.role() = 'authenticated');
+CREATE POLICY "Admins manage private storage" ON storage.objects
+  FOR ALL
+  USING (
+    bucket_id = 'academic-materials' AND public.is_admin(auth.uid())
+  );

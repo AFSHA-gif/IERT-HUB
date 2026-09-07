@@ -40,7 +40,12 @@ export default function StudentRegister() {
       setLoading(false);
 
       if (res.success) {
-        navigate(from, { replace: true });
+        if (res.requiresVerification) {
+          alert(res.message || 'Registration successful! Please check your email to confirm your account before logging in.');
+          navigate('/student/login', { replace: true });
+        } else {
+          navigate(from, { replace: true });
+        }
       } else {
         setError(res.error || 'Registration failed.');
       }

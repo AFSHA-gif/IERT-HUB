@@ -16,13 +16,13 @@ export default function AdminLogin({ onShowToast }) {
 
   const from = location.state?.from || '/admin';
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
 
-    setTimeout(() => {
-      const res = loginAdmin(email, password);
+    try {
+      const res = await loginAdmin(email, password);
       setLoading(false);
 
       if (res.success) {
@@ -31,12 +31,15 @@ export default function AdminLogin({ onShowToast }) {
         }
         navigate(from, { replace: true });
       } else {
-        setError(res.error);
+        setError(res.error || 'Login failed. Invalid administrator credentials.');
         if (onShowToast) {
-          onShowToast("Login failed. Invalid administrator credentials.", "error");
+          onShowToast(res.error || "Login failed. Invalid administrator credentials.", "error");
         }
       }
-    }, 400);
+    } catch (err) {
+      setLoading(false);
+      setError(err.message || 'An unexpected authentication error occurred.');
+    }
   };
 
   return (
