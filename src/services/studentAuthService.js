@@ -326,44 +326,61 @@ export async function resetStudentPassword(email) {
    ======================================================== */
 
 export async function fetchStudentsFromDB() {
-  if (isSupabaseConfigured && supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('students')
-        .select('*')
-        .order('registration_date', { ascending: false });
-
-      if (error) {
-        console.warn('Fetch students DB error:', error.message);
-      }
-
-      if (!error && data) {
-        console.log('Fetch students DB success count:', data.length);
-        const mapped = data.map(s => ({
-          id: s.id,
-          fullName: s.full_name,
-          email: s.email,
-          semester: s.semester || 3,
-          branch: s.branch || 'B.Tech Cyber Security',
-          status: s.status || 'Active',
-          registrationDate: s.registration_date,
-          lastLogin: s.last_login
-        }));
-        try {
-          localStorage.setItem(PROFILES_CACHE_KEY, JSON.stringify(mapped));
-        } catch (e) {}
-        return mapped;
-      }
-    } catch (err) {
-      console.warn('Fetch students error:', err);
-    }
+  if (!isSupabaseConfigured || !supabase) {
+    return { success: false, error: 'Supabase Cloud Storage is not configured.' };
   }
 
   try {
-    const raw = localStorage.getItem(PROFILES_CACHE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch (e) {
-    return [];
+    // 1. Retrieve active authenticated Supabase Auth user
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+
+    if (userError || !userData?.user) {
+      console.warn('[ADMIN DEBUG] fetchStudentsFromDB authorization check: No authenticated Supabase Auth user session.');
+      return { success: false, error: 'Authentication required. No active Supabase Auth user session found.' };
+    }
+
+    const currentUser = userData.user;
+
+    // 2. Verify admin authorization via database RPC is_admin
+    const { data: isAdmin, error: rpcError } = await supabase.rpc('is_admin', { check_user_id: currentUser.id });
+
+    if (rpcError || !isAdmin) {
+      console.warn('[ADMIN DEBUG] fetchStudentsFromDB admin check: User is not authorized as an admin.', rpcError?.message);
+      return { success: false, error: 'Access Denied: You do not have administrator permissions to access student records.' };
+    }
+
+    // 3. Query real student records from public.students
+    const { data, error } = await supabase
+      .from('students')
+      .select('*')
+      .order('registration_date', { ascending: false });
+
+    if (error) {
+      console.error('[ADMIN DEBUG] fetchStudentsFromDB database query error:', error.message);
+      return { success: false, error: `Database Error: ${error.message}` };
+    }
+
+    // 4. Map DB columns accurately to expected frontend properties
+    const mapped = (data || []).map(s => ({
+      id: s.id,
+      fullName: s.full_name,
+      email: s.email,
+      semester: s.semester || 3,
+      branch: s.branch || 'B.Tech Cyber Security',
+      status: s.status || 'Active',
+      registrationDate: s.registration_date,
+      lastLogin: s.last_login
+    }));
+
+    try {
+      localStorage.setItem(PROFILES_CACHE_KEY, JSON.stringify(mapped));
+    } catch (e) {}
+
+    console.log(`[ADMIN DEBUG] fetchStudentsFromDB fetched ${mapped.length} real student rows from Supabase.`);
+    return { success: true, data: mapped };
+  } catch (err) {
+    console.error('[ADMIN DEBUG] fetchStudentsFromDB exception:', err);
+    return { success: false, error: err.message || 'An unexpected network error occurred while loading student registry.' };
   }
 }
 

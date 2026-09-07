@@ -25,11 +25,14 @@ import {
 } from '../../services/studentAuthService';
 import ConfirmDialog from '../../components/ConfirmDialog';
 
+import { supabase } from '../../services/supabaseClient';
+
 export default function AdminStudents({ onShowToast }) {
   const [students, setStudents] = useState([]);
   const [analytics, setAnalytics] = useState({ totalStudents: 0, activeStudents: 0, inactiveStudents: 0, newToday: 0 });
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [fetchError, setFetchError] = useState('');
 
   // Selected Student for Detail Modal
   const [viewTarget, setViewTarget] = useState(null);
@@ -39,17 +42,37 @@ export default function AdminStudents({ onShowToast }) {
   const [isDeleting, setIsDeleting] = useState(false);
 
   const loadData = async () => {
-    const list = await fetchStudentsFromDB();
-    const activeList = list || getAllStudents();
-    console.log('AdminStudents loadData activeList count:', activeList?.length);
-    setStudents(activeList);
-    setAnalytics(getStudentAnalytics(activeList));
+    setFetchError('');
+    const res = await fetchStudentsFromDB();
+
+    if (res?.success && Array.isArray(res.data)) {
+      console.log(`[ADMIN DEBUG] loadData success. Setting ${res.data.length} real student rows.`);
+      setStudents(res.data);
+      setAnalytics(getStudentAnalytics(res.data));
+    } else if (res?.error) {
+      console.warn('[ADMIN DEBUG] loadData fetch error:', res.error);
+      setFetchError(res.error);
+      if (onShowToast) {
+        onShowToast(res.error, "error");
+      }
+    }
   };
 
   useEffect(() => {
     loadData();
+
+    // Re-trigger data load when Supabase Auth session finishes restoring
+    const { data: authListener } = supabase?.auth ? supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        loadData();
+      }
+    }) : { data: null };
+
     window.addEventListener('iert_student_registry_updated', loadData);
-    return () => window.removeEventListener('iert_student_registry_updated', loadData);
+    return () => {
+      authListener?.subscription?.unsubscribe();
+      window.removeEventListener('iert_student_registry_updated', loadData);
+    };
   }, []);
 
   // Handle Deactivate / Reactivate Toggle
@@ -139,6 +162,13 @@ export default function AdminStudents({ onShowToast }) {
           </p>
         </div>
       </div>
+
+      {fetchError && (
+        <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs flex items-center gap-2 animate-shake">
+          <AlertCircle className="w-5 h-5 shrink-0" />
+          <span>{fetchError}</span>
+        </div>
+      )}
 
       {/* Top Analytics Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
