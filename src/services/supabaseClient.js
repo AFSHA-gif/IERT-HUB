@@ -1,7 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const rawUrl = (import.meta.env.VITE_SUPABASE_URL || '').trim();
+const rawKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
+
+// Clean SUPABASE_URL to prevent "Invalid path specified in request URL" errors
+export const SUPABASE_URL = rawUrl
+  .replace(/['"]/g, '')
+  .replace(/\/+$/, '')
+  .replace(/\/(rest|auth)\/v\d+$/i, '')
+  .replace(/\/+$/, '');
+
+export const SUPABASE_ANON_KEY = rawKey.replace(/['"]/g, '');
 
 export const isSupabaseConfigured = Boolean(
   SUPABASE_URL && 

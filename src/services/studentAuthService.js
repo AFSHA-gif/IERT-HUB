@@ -91,10 +91,13 @@ export async function registerStudent(fullName, email, password) {
 
   if (isSupabaseConfigured && supabase) {
     try {
+      const siteUrl = typeof window !== 'undefined' ? window.location.origin : 'https://iert-hub.vercel.app';
+
       const { data: authData, error: authErr } = await supabase.auth.signUp({
         email: cleanEmail,
         password: password,
         options: {
+          emailRedirectTo: `${siteUrl}/student/login`,
           data: {
             full_name: cleanName,
             semester: 3,
@@ -115,19 +118,19 @@ export async function registerStudent(fullName, email, password) {
       const nowIso = new Date().toISOString();
 
       // Insert Student Profile Record into public.students
-      const { error: profileErr } = await supabase.from('students').upsert([{
-        id: userId,
-        full_name: cleanName,
-        email: cleanEmail,
-        semester: 3,
-        branch: 'B.Tech Cyber Security',
-        status: 'Active',
-        registration_date: nowIso,
-        last_login: nowIso
-      }], { onConflict: 'email' });
-
-      if (profileErr) {
-        console.warn('Student profile upsert notice:', profileErr.message);
+      try {
+        await supabase.from('students').upsert([{
+          id: userId,
+          full_name: cleanName,
+          email: cleanEmail,
+          semester: 3,
+          branch: 'B.Tech Cyber Security',
+          status: 'Active',
+          registration_date: nowIso,
+          last_login: nowIso
+        }], { onConflict: 'id' });
+      } catch (profileErr) {
+        console.warn('Student profile upsert notice:', profileErr);
       }
 
       // Assign student role in public.user_roles
@@ -137,7 +140,7 @@ export async function registerStudent(fullName, email, password) {
           role: 'student',
           active: true
         }], { onConflict: 'user_id' });
-      } catch (e) {}
+      } catch (roleErr) {}
 
       // Handle Email Verification requirement if enabled on Supabase
       if (authData.session === null && authData.user?.identities?.length > 0) {
